@@ -1,0 +1,6 @@
+conf/*
+!.template
+*.conf
+conf.*
+log_script/conf/*
+.DS_Store
