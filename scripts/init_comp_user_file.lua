@@ -1,45 +1,8 @@
-
-
-
-local lfs = require 'lfs'
-comp_file_table = {}
-local counter = -1
-local update_freq = 10
-local last_folder = 0
-local require_table = {}
-local root_folder = '/Users/xdyan/competitor_user_id/'
-
-local function record_req_local()
-    local folder_list = ''
-    local req_list = ''
-    for file in lfs.dir(root_folder) do
-        folder_list = folder_list .. ' ' .. file
-    end
-    for k, v in pairs(require_table) do
-        req_list = req_list .. ',' .. k .. ':' .. v
-    end
-    ngx.log(ngx.ERR, folder_list .. ';' .. req_list)
-end
-
-local function update_file_table_local(n)
-    local comp_file_table_temp = {}
-    for file in lfs.dir(root_folder .. '/' .. n) do
-        if string.find(file, '.') >= 0 then
-            comp_file_table_temp[file] = io.open(root_folder .. '/' .. n .. '/' .. file, "r")
-        end
-    end
-    comp_file_table = comp_file_table_temp
-    require_table = {}
-end
-
-function update_file_table()
-    if counter >= 1 and counter < update_freq then
-        counter = counter + 1
-        return
-    else
-        counter = 1
-    end
+local function check_folder(root_folder)
+    local lfs = require 'lfs'
     local folder_counter = 0
+    local file_table = {}
+
     for file in lfs.dir(root_folder) do
         local n = tonumber(file)
         if n then
@@ -47,24 +10,57 @@ function update_file_table()
         end
     end
     if folder_counter ~= 1 then
-        return
+        return nil
     end
-
-    for file in lfs.dir(root_folder) do
-        local n = tonumber(file)
-        if n and n > last_folder then
-            update_file_table_local(n)
-            last_folder = n
+    for folder in lfs.dir(root_folder) do
+        local n = tonumber(folder)
+        if n then
+            file_table = {}
+            for file in lfs.dir(root_folder .. '/' .. n) do
+                if string.find(file, '[A-Z]') == 1 then
+                    file_table[file] = io.open(root_folder .. '/' .. n .. '/' .. file, "r")
+                end
+            end
         end
     end
-
-    record_req_local()
+    return file_table
 end
 
-function record_req(country)
-    if not require_table[country] then
-        require_table[country] = 0
-    end
-    require_table[country] = require_table[country] + 1
-end
+ngx.timer.at(0, function(premature)
+    ngx.thread.spawn(function()
+        local comp_file_table = {}
+        local counter = -1
+        local update_freq = 600
+        local sleep_time = 0.2
+        local max_queue_len = 10000
+        local root_folder = '/Users/xdyan/competitor_user_id/'
 
+        while not ngx.worker.exiting() and ngx.worker.id() == 0 do
+            -- check local file to fill comp_file_table
+            if counter< 0 or counter>= update_freq then
+                local file_table = check_folder(root_folder)
+                if file_table then
+                    comp_file_table = file_table
+                    counter = 0
+                else
+                    counter = -1
+                end
+            else
+                counter = counter + sleep_time
+                -- push data to user_queue
+                for country, file in pairs(comp_file_table) do
+                    while ngx.shared.user_queue:llen(country) < max_queue_len do
+                        local line = file:read()
+                        if not line then
+                            file:seek('set')
+                            line = file:read()
+                        end
+                        ngx.shared.user_queue:rpush(country, line)
+                    end
+                end
+            end
+
+            ngx.sleep(sleep_time)
+        end
+    end)
+end)

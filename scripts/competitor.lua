@@ -56,7 +56,6 @@ local function check_req(req)
     if not req.country then 
         exit_err("require country")
     end
-    record_req(req.country)
 end
 
 
@@ -76,24 +75,12 @@ if not ok then
 end
 
 check_req(req)
-update_file_table()
-local file = comp_file_table[req.country]
-if not file then
+local line = ngx.shared.user_queue:lpop(req.country)
+if not line then
     exit_err("country not exist " .. req.country)
 end
 
-local line = file:read()
---when EOF seek to the first_line
-if not line then
-    file:seek('set')
-    line = file:read()
-end
-if not line then
-    ngx.log(ngx.ERR, "EOF " .. req.country)
-    exit_err("EOF")
-end
-
--- format: user_id /t pkg_name
+-- format: user_id /t pkg_name /t method
 local text = {}
 for w in string.gmatch(line, "%S+") do
     table.insert(text,w)
